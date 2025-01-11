@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"time"
 )
+
+var eventTypes []string = []string{"WatchEvent", "CommitCommentEvent", "CreateEvent", "DeleteEvent", "ForkEvent", "GollumEvent", "IssueCommentEvent", "IssuesEvent", "MemberEvent", "PublicEvent", "PullRequestReviewEvent", "PullRequestReviewCommentEvent", "PullRequestReviewThreadEvent", "PushEvent", "ReleaseEvent", "SponsorshipEvent", "WatchEvent"}
 
 type Actor struct {
 	Id           int    `json:"id"`
@@ -53,6 +54,11 @@ type Event struct {
 	Public    bool      `json:"public"`
 	CreatedAt time.Time `json:"created_at"`
 }
+type GithubReqError struct {
+	Message          string `json:"message"`
+	DocumentationUrl string `json:"documentation_url"`
+	Status           string `json:"status"`
+}
 
 // X-GitHub-Api-Version
 
@@ -60,8 +66,26 @@ func getUrl(u string) string {
 	return fmt.Sprintf("https://api.github.com/users/%v/events", u)
 }
 func main() {
-	fmt.Println("Welcome to Github Tracker")
+	fmt.Println("Welcome to Github Event Activity Tracker")
+	fmt.Println("")
 	userName, err := getUserName()
+	uInputs := getUserInput()
+	filterType := uInputs[2]
+	if filterType != "" {
+		isValidEvent := false
+		for _, eventType := range eventTypes {
+			if eventType == filterType {
+				isValidEvent = true
+				break
+			}
+		}
+
+		if !isValidEvent {
+			fmt.Printf("Invalid event type passed: %s\n", filterType)
+			os.Exit(1)
+		}
+	}
+
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -71,15 +95,35 @@ func main() {
 		return
 	}
 
-	fmt.Println("github username: ", userName)
-
 	events, err := fetchData(userName)
 	if err != nil {
 		fmt.Println("Error", err.Error())
 	}
-	for _, event := range events {
+
+	gEvents, err := filterEvents(events, filterType)
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+
+	for _, event := range gEvents {
 		event.displayData()
 	}
+
+}
+
+func filterEvents(events []Event, eType string) ([]Event, error) {
+	var filteredEvent []Event
+	for _, value := range events {
+		fmt.Println(value.Type, eType)
+		if value.Type == eType {
+			filteredEvent = append(filteredEvent, value)
+		}
+	}
+	if len(filteredEvent) < 1 {
+		return nil, fmt.Errorf("Event of type: %v  does not exists", eType)
+	}
+	return filteredEvent, nil
 }
 
 func getUserInput() []string {
@@ -89,7 +133,7 @@ func getUserInput() []string {
 
 func getUserName() (string, error) {
 	tData := getUserInput()
-	if len(tData) >= 2 {
+	if len(tData) >= 3 {
 		return tData[1], nil
 	} else {
 		return "", errors.New("error reading input")
@@ -99,22 +143,40 @@ func getUserName() (string, error) {
 func fetchData(u string) ([]Event, error) {
 
 	url := getUrl(u)
-	fmt.Println(url)
-	events := []Event{}
+	var events []Event
 
 	resp, err := http.Get(url)
 	if err != nil {
-		return []Event{}, err
+		return nil, fmt.Errorf("failed to make HTTP request: %w", err)
 	}
+	defer resp.Body.Close()
+
 	respByte, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return []Event{}, err
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
+
+	// Check if the response is empty
+	if len(respByte) == 0 {
+		return nil, fmt.Errorf("empty response from GitHub API")
+	}
+
 	err = json.Unmarshal(respByte, &events)
 	if err != nil {
-		return []Event{}, err
+		var githubReqError GithubReqError
+
+		if err := json.Unmarshal(respByte, &githubReqError); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		}
+
+		// Log the GitHub API error details
+		fmt.Printf("GitHub API Error:\nStatus: %v\nMessage: %s\nDocumentation: %s\n",
+			githubReqError.Status, githubReqError.Message, githubReqError.DocumentationUrl)
+
+		return nil, fmt.Errorf("GitHub API error: %s", githubReqError.Message)
+
 	}
-	resp.Body.Close()
+
 	return events, nil
 }
 
@@ -127,36 +189,44 @@ func (e Event) displayData() {
 	fmt.Printf("...\n")
 }
 
-func connect(url string, token *string) {
-	req, err := http.NewRequest("POST", url, nil)
-	if err != nil {
-		log.Fatalf("Error creating request %v", err)
-	}
-	//Add custom headers
-	tokenBearer := fmt.Sprintf("Bearer %v", token)
-	req.Header.Add("Authorization", tokenBearer)
-	req.Header.Add("clientId", "payfonte")
+// func counter() func() int {
+// 	count := 0
+// 	return func() int {
+// 		count++
+// 		return count
+// 	}
+// }
 
-	// Add query params
-	query := req.URL.Query()
-	query.Add("eventType", "PushEvent")
-	req.URL.RawQuery = query.Encode()
+// func connect(url string, token *string) {
+// 	req, err := http.NewRequest("POST", url, nil)
+// 	if err != nil {
+// 		log.Fatalf("Error creating request %v", err)
+// 	}
+// 	//Add custom headers
+// 	tokenBearer := fmt.Sprintf("Bearer %v", token)
+// 	req.Header.Add("Authorization", tokenBearer)
+// 	req.Header.Add("clientId", "payfonte")
 
-	// send out the request
-	client := &http.Client{}
-	res, err := client.Do(req)
-	if err != nil {
-		log.Fatalf("Error sending request: %v", err)
-	}
-	defer res.Body.Close()
+// 	// Add query params
+// 	query := req.URL.Query()
+// 	query.Add("eventType", "PushEvent")
+// 	req.URL.RawQuery = query.Encode()
 
-	// Read the response body
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		log.Fatalf("Error reading response body: %v", err)
-	}
+// 	// send out the request
+// 	client := &http.Client{}
+// 	res, err := client.Do(req)
+// 	if err != nil {
+// 		log.Fatalf("Error sending request: %v", err)
+// 	}
+// 	defer res.Body.Close()
 
-	// Print the response status and body
-	fmt.Println("Response Status:", res.Status)
-	fmt.Println("Response Body:", string(body))
-}
+// 	// Read the response body
+// 	body, err := io.ReadAll(res.Body)
+// 	if err != nil {
+// 		log.Fatalf("Error reading response body: %v", err)
+// 	}
+
+// 	// Print the response status and body
+// 	fmt.Println("Response Status:", res.Status)
+// 	fmt.Println("Response Body:", string(body))
+// }
