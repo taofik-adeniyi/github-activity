@@ -69,8 +69,16 @@ func main() {
 	fmt.Println("Welcome to Github Event Activity Tracker")
 	fmt.Println("")
 	userName, err := getUserName()
+	fmt.Println("userName", userName)
 	uInputs := getUserInput()
-	filterType := uInputs[2]
+	var filterType string
+
+	if len(uInputs) < 3 {
+		filterType = "PushEvent"
+	} else {
+		filterType = uInputs[2]
+	}
+
 	if filterType != "" {
 		isValidEvent := false
 		for _, eventType := range eventTypes {
@@ -133,7 +141,7 @@ func getUserInput() []string {
 
 func getUserName() (string, error) {
 	tData := getUserInput()
-	if len(tData) >= 3 {
+	if len(tData) >= 2 {
 		return tData[1], nil
 	} else {
 		return "", errors.New("error reading input")
